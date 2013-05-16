@@ -1,4 +1,5 @@
 require 'win32ole'
+require 'yaml'
 
 module Status
   class Status

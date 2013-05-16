@@ -1,5 +1,7 @@
 #! /usr/bin/ruby
 
+require './connection'
+
 if ARGV[0] == '-u'
   raise 'username(-u username) is missing' if ARGV.length < 2
   username = ARGV[1]
@@ -14,7 +16,7 @@ if ARGV[0] == '-p'
   ARGV.shift
 end
 
-qc = Connection.new(username, password, 'config2.yaml')
+qc = Connection.new(username, password, 'config.yaml')
 qc.connect
 
 if ARGV.length == 0
