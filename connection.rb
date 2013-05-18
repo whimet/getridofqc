@@ -1,5 +1,6 @@
 require 'win32ole'
 require 'yaml'
+require_relative 'lib/qc/comments'
 
 module Status
   class Status
@@ -68,9 +69,13 @@ class Connection
     filter['BG_BUG_ID'] = id
     list = filter.NewList
     list.each { |bug|
-      yield bug
-      bug.Post
-      puts "#{bug.ID}: #{bug.Status}, assigned to #{bug.AssignedTo}"
+      begin
+        yield bug
+        bug.Post
+        puts "#{bug.ID}: #{bug.Status}, assigned to #{bug.AssignedTo}"
+      rescue
+        bug.Undo
+      end
     }
   end
 
@@ -83,8 +88,12 @@ class Connection
 
       bug.Status = 'Open'
       bug.AssignedTo = @username
-      bug.Post
+      add_comment(bug, "#{@username} is working on this issue.")
     }
+  end
+
+  def add_comment(bug, comment)
+    bug['BG_DEV_COMMENTS'] = Comments.new(bug['BG_DEV_COMMENTS']).add(comment, @username).to_s
   end
 
   def fix(id)
@@ -95,11 +104,10 @@ class Connection
       end
 
       bug.Status = 'For Fix'
-      bug.Post
     }
   end
 
-  def deploy(id)
+  def deploy(id, comment)
     update_defect(id) { |bug|
       if convert(bug.Status).after FOR_FIX
         puts "can't deploy defect #{id} with status #{bug.Status}"
@@ -113,7 +121,29 @@ class Connection
 
       bug.Status = 'For Deployment'
       bug.AssignedTo = bug.DetectedBy
-      bug.Post
+      add_comment(bug, comment)
+    }
+  end
+
+  def comment(id, comment)
+    update_defect(id) { |bug|
+      add_comment(bug, comment)
+    }
+  end
+
+  def close(id)
+    update_defect(id) { |bug|
+      if convert(bug.Status).after FOR_RETEST
+        puts "can't close defect #{id} with status #{bug.Status}"
+        return
+      end
+
+      if bug.Status == 'For Deployment'
+        bug.Status = 'For Retest'
+        bug.Post
+      end
+
+      bug.Status = 'Closed'
     }
   end
 
@@ -132,9 +162,14 @@ class Connection
       filter[key] = value
     }
     list = filter.NewList
+    count = 0
     list.each { |bug|
-      puts self.send(renderer, bug)
+      if !block_given? || (yield bug)
+        puts self.send(renderer, bug)
+        count = count + 1
+      end
     }
+    puts "Total: #{count}" if count > 5
   end
 
   def default_renderer(bug)
@@ -142,6 +177,6 @@ class Connection
   end
 
   def renderer_with_desc(bug)
-    "#{default_renderer(bug)}\n\n#{bug['BG_DESCRIPTION']}\n"
+    "#{default_renderer(bug)}\n\n#{bug['BG_DESCRIPTION']}\n\n#{bug['BG_DEV_COMMENTS']}\n"
   end
 end
