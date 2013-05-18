@@ -1,6 +1,6 @@
 #! /usr/bin/ruby
 
-require './connection'
+require_relative 'lib/qc/connection'
 
 if ARGV[0] == '-u'
   raise 'username(-u username) is missing' if ARGV.length < 2
