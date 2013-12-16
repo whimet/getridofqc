@@ -2,7 +2,7 @@ require 'win32ole'
 require 'yaml'
 require_relative 'comments'
 
-module Status
+module Defect
   class Status
     def initialize name, order
       @name = name
@@ -20,23 +20,36 @@ module Status
     def after(another)
       @order > another.order
     end
+
+    def next
+      @order + 1 == ALL_STATUS.length ? nil : ALL_STATUS[@order + 1]
+    end
   end
 
-  NEW = Status.new('New', 1)
-  OPEN = Status.new('Open', 2)
-  FOR_FIX = Status.new('For Fix', 3)
-  FOR_DEPLOY = Status.new('For Deployment', 4)
-  FOR_RETEST = Status.new('For Retest', 5)
-  CLOSED = Status.new('Closed', 6)
+  NEW = Status.new('New', 0)
+  OPEN = Status.new('Open', 1)
+  FOR_FIX = Status.new('For Fix', 2)
+  FOR_DEPLOY = Status.new('For Deployment', 3)
+  FOR_RETEST = Status.new('For Retest', 4)
+  CLOSED = Status.new('Closed', 5)
   ALL_STATUS = [NEW, OPEN, FOR_FIX, FOR_DEPLOY, FOR_RETEST, CLOSED]
 
   def convert(string)
     ALL_STATUS.select { |x| x.name == string }.first
   end
+
+  def step_forward_to(bug, to_status)
+    raise "invalid status: #{bug.Status}" if convert(bug.Status).after to_status
+
+    until bug.Status == to_status.name do
+      bug.Status = convert(bug.Status).next.name
+      bug.Post
+    end
+  end
 end
 
 class Connection
-  include Status
+  include Defect
 
   def initialize username, password, yaml_file
     connections = YAML.load(open(yaml_file))
@@ -73,8 +86,10 @@ class Connection
         yield bug
         bug.Post
         puts "#{bug.ID}: #{bug.Status}, assigned to #{bug.AssignedTo}"
-      rescue
+      rescue Exception => e
         bug.Undo
+        puts e.message
+        puts e.backtrace.inspect
       end
     }
   end
@@ -107,11 +122,23 @@ class Connection
     }
   end
 
+  def reject(id, comment)
+    update_defect(id) { |bug|
+      bug.AssignedTo = bug.DetectedBy
+      add_comment(bug, comment)
+    }
+  end
+
   def deploy(id, comment)
     update_defect(id) { |bug|
       if convert(bug.Status).after FOR_FIX
         puts "can't deploy defect #{id} with status #{bug.Status}"
         return
+      end
+
+      if bug.Status == 'New'
+        bug.Status = 'Open'
+        bug.Post
       end
 
       if bug.Status == 'Open'
@@ -138,9 +165,8 @@ class Connection
         return
       end
 
-      if bug.Status == 'For Deployment'
-        bug.Status = 'For Retest'
-        bug.Post
+      if bug.Status != FOR_RETEST.name
+        step_forward_to(bug, FOR_RETEST)
       end
 
       bug.Status = 'Closed'
@@ -173,10 +199,14 @@ class Connection
   end
 
   def default_renderer(bug)
-    "#{bug.ID}(<#{bug.DetectedBy}, >#{bug.AssignedTo}): #{bug.Status} - #{bug.Summary}"
+    "#{bug.ID}(#{bug.Priority.split(' ').last()}, <#{bug.DetectedBy}, >#{bug.AssignedTo}): #{bug.Status} - #{bug.Summary}"
   end
 
   def renderer_with_desc(bug)
-    "#{default_renderer(bug)}\n\n#{bug['BG_DESCRIPTION']}\n\n#{bug['BG_DEV_COMMENTS']}\n"
+    "#{default_renderer(bug)}\n\n#{html_to_text(bug['BG_DESCRIPTION'])}\n\n#{html_to_text(bug['BG_DEV_COMMENTS'])}\n"
+  end
+
+  def html_to_text(html)
+    html ? html.gsub(/<br>/, "\n").gsub(/<[^<>]+>/, '') : ''
   end
 end
