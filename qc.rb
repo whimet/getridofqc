@@ -1,4 +1,3 @@
-#! /usr/bin/ruby
 require_relative 'lib/qc/connection'
 
 if ARGV[0] == 'help'
